@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Static GNSS baseline analysis for GPS_GNSS POC.
+"""Static GNSS baseline analysis for a GnssLogger-compatible log.
 
 Usage:
-    python analysis/analyze_static.py path/to/location.csv
-    python analysis/analyze_static.py path/to/location.csv --truth-lat 40.0 --truth-lon -3.0
+    python analysis/analyze_static.py path/to/gnss_log.txt
+    python analysis/analyze_static.py path/to/gnss_log.txt --truth-lat 40.0 --truth-lon -3.0
 
 Without a surveyed/reference coordinate, the script reports dispersion around the
 sample median. That is repeatability/precision, not absolute positioning error.
@@ -12,6 +12,7 @@ sample median. That is repeatability/precision, not absolute positioning error.
 from __future__ import annotations
 
 import argparse
+import csv
 import math
 from pathlib import Path
 
@@ -19,6 +20,25 @@ import numpy as np
 import pandas as pd
 
 EARTH_RADIUS_M = 6_378_137.0
+FIX_COLUMNS = [
+    "record_type", "Provider", "LatitudeDegrees", "LongitudeDegrees", "AltitudeMeters",
+    "SpeedMps", "AccuracyMeters", "BearingDegrees", "UnixTimeMillis", "SpeedAccuracyMps",
+    "BearingAccuracyDegrees", "elapsedRealtimeNanos", "VerticalAccuracyMeters", "MockLocation",
+]
+
+
+def read_fixes(path: Path) -> pd.DataFrame:
+    rows: list[list[str]] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for row in csv.reader(handle):
+            if row and row[0] == "Fix":
+                rows.append(row[: len(FIX_COLUMNS)] + [""] * max(0, len(FIX_COLUMNS) - len(row)))
+    if not rows:
+        raise SystemExit("No GnssLogger Fix records found")
+    df = pd.DataFrame(rows, columns=FIX_COLUMNS)
+    for name in ("LatitudeDegrees", "LongitudeDegrees", "AccuracyMeters"):
+        df[name] = pd.to_numeric(df[name], errors="coerce")
+    return df.dropna(subset=["LatitudeDegrees", "LongitudeDegrees"]).copy()
 
 
 def local_xy(lat_deg: np.ndarray, lon_deg: np.ndarray, lat0_deg: float, lon0_deg: float) -> tuple[np.ndarray, np.ndarray]:
@@ -48,7 +68,7 @@ def summarize(errors_m: np.ndarray, east_m: np.ndarray, north_m: np.ndarray) -> 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("location_csv", type=Path)
+    parser.add_argument("gnss_log", type=Path)
     parser.add_argument("--truth-lat", type=float)
     parser.add_argument("--truth-lon", type=float)
     args = parser.parse_args()
@@ -56,13 +76,7 @@ def main() -> None:
     if (args.truth_lat is None) != (args.truth_lon is None):
         parser.error("--truth-lat and --truth-lon must be supplied together")
 
-    df = pd.read_csv(args.location_csv)
-    required = {"latitude_deg", "longitude_deg", "horizontal_accuracy_m"}
-    missing = required - set(df.columns)
-    if missing:
-        raise SystemExit(f"Missing columns: {sorted(missing)}")
-
-    df = df.dropna(subset=["latitude_deg", "longitude_deg"]).copy()
+    df = read_fixes(args.gnss_log)
     if df.empty:
         raise SystemExit("No valid GNSS fixes found")
 
@@ -70,13 +84,13 @@ def main() -> None:
         ref_lat, ref_lon = args.truth_lat, args.truth_lon
         mode = "ABSOLUTE ERROR AGAINST PROVIDED REFERENCE"
     else:
-        ref_lat = float(df["latitude_deg"].median())
-        ref_lon = float(df["longitude_deg"].median())
+        ref_lat = float(df["LatitudeDegrees"].median())
+        ref_lon = float(df["LongitudeDegrees"].median())
         mode = "DISPERSION AROUND SAMPLE MEDIAN (NOT ABSOLUTE ACCURACY)"
 
     east, north = local_xy(
-        df["latitude_deg"].to_numpy(float),
-        df["longitude_deg"].to_numpy(float),
+        df["LatitudeDegrees"].to_numpy(float),
+        df["LongitudeDegrees"].to_numpy(float),
         ref_lat,
         ref_lon,
     )
@@ -91,7 +105,7 @@ def main() -> None:
         else:
             print(f"{key:18s}: {value:.3f}")
 
-    reported = df["horizontal_accuracy_m"].dropna().to_numpy(float)
+    reported = df["AccuracyMeters"].dropna().to_numpy(float)
     if len(reported):
         print("\nAndroid reported horizontal accuracy (metadata, not ground truth):")
         print(f"median_accuracy_m : {np.median(reported):.3f}")
