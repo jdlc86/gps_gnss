@@ -17,14 +17,15 @@ import java.util.TimeZone
 
 class SessionRecorder(private val context: Context) {
 
-    private var sessionDir: File? = null
+    private var activeSessionDir: File? = null
+    private var lastSessionDir: File? = null
     private var locationWriter: BufferedWriter? = null
     private var rawWriter: BufferedWriter? = null
     private var imuWriter: BufferedWriter? = null
     private var statusWriter: BufferedWriter? = null
 
     val isRecording: Boolean
-        get() = sessionDir != null
+        get() = activeSessionDir != null
 
     fun start(): File {
         stop()
@@ -35,7 +36,8 @@ class SessionRecorder(private val context: Context) {
         }.format(Date())
         val dir = File(root, "session_$timestamp")
         check(dir.mkdirs()) { "Cannot create session directory" }
-        sessionDir = dir
+        activeSessionDir = dir
+        lastSessionDir = dir
 
         locationWriter = writer(dir, "location.csv").also {
             it.write("utc_time_ms,elapsed_realtime_ns,latitude_deg,longitude_deg,altitude_m,horizontal_accuracy_m,vertical_accuracy_m,speed_mps,speed_accuracy_mps,bearing_deg,bearing_accuracy_deg,provider\n")
@@ -64,12 +66,12 @@ class SessionRecorder(private val context: Context) {
         rawWriter = null
         imuWriter = null
         statusWriter = null
-        sessionDir = null
+        activeSessionDir = null
     }
 
-    fun currentFiles(): List<File> = sessionDir?.listFiles()?.filter { it.isFile }?.sortedBy { it.name }.orEmpty()
+    fun currentFiles(): List<File> = lastSessionDir?.listFiles()?.filter { it.isFile }?.sortedBy { it.name }.orEmpty()
 
-    fun currentDirectory(): File? = sessionDir
+    fun currentDirectory(): File? = activeSessionDir
 
     fun recordLocation(location: Location) {
         val writer = locationWriter ?: return
