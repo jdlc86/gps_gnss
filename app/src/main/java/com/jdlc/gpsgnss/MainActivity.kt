@@ -143,16 +143,17 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     }
 
     private fun registerSensors() {
-        listOf(
-            Sensor.TYPE_ACCELEROMETER,
-            Sensor.TYPE_GYROSCOPE,
-            Sensor.TYPE_MAGNETIC_FIELD,
-            Sensor.TYPE_ROTATION_VECTOR
-        ).forEach { type ->
-            sensorManager.getDefaultSensor(type)?.let { sensor ->
-                sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_GAME)
-            }
+        registerPreferredSensor(Sensor.TYPE_ACCELEROMETER_UNCALIBRATED, Sensor.TYPE_ACCELEROMETER)
+        registerPreferredSensor(Sensor.TYPE_GYROSCOPE_UNCALIBRATED, Sensor.TYPE_GYROSCOPE)
+        registerPreferredSensor(Sensor.TYPE_MAGNETIC_FIELD_UNCALIBRATED, Sensor.TYPE_MAGNETIC_FIELD)
+        sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)?.let {
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
         }
+    }
+
+    private fun registerPreferredSensor(preferredType: Int, fallbackType: Int) {
+        val sensor = sensorManager.getDefaultSensor(preferredType) ?: sensorManager.getDefaultSensor(fallbackType)
+        sensor?.let { sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }
     }
 
     private fun startRecording() {
@@ -186,11 +187,11 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             FileProvider.getUriForFile(this, "$packageName.files", file)
         })
         val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-            type = "text/csv"
+            type = "text/plain"
             putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        startActivity(Intent.createChooser(intent, "Export positioning dataset"))
+        startActivity(Intent.createChooser(intent, "Export GnssLogger dataset"))
     }
 
     private fun updateLocationUi(location: Location) {
@@ -239,9 +240,9 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
     override fun onSensorChanged(event: SensorEvent) {
         when (event.sensor.type) {
-            Sensor.TYPE_ACCELEROMETER -> accel = event.values.copyOf(3)
-            Sensor.TYPE_GYROSCOPE -> gyro = event.values.copyOf(3)
-            Sensor.TYPE_MAGNETIC_FIELD -> magnet = event.values.copyOf(3)
+            Sensor.TYPE_ACCELEROMETER, Sensor.TYPE_ACCELEROMETER_UNCALIBRATED -> accel = event.values.copyOf(3)
+            Sensor.TYPE_GYROSCOPE, Sensor.TYPE_GYROSCOPE_UNCALIBRATED -> gyro = event.values.copyOf(3)
+            Sensor.TYPE_MAGNETIC_FIELD, Sensor.TYPE_MAGNETIC_FIELD_UNCALIBRATED -> magnet = event.values.copyOf(3)
             Sensor.TYPE_ROTATION_VECTOR -> {
                 val rotation = FloatArray(9)
                 val orientation = FloatArray(3)
