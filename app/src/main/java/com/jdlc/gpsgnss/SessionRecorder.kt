@@ -5,7 +5,6 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorManager
 import android.location.GnssClock
-import android.location.GnssMeasurement
 import android.location.GnssMeasurementsEvent
 import android.location.GnssStatus
 import android.location.Location
@@ -123,7 +122,7 @@ class SessionRecorder(private val context: Context) {
                 if (m.hasFullInterSignalBiasUncertaintyNanos()) m.fullInterSignalBiasUncertaintyNanos else "",
                 if (m.hasSatelliteInterSignalBiasNanos()) m.satelliteInterSignalBiasNanos else "",
                 if (m.hasSatelliteInterSignalBiasUncertaintyNanos()) m.satelliteInterSignalBiasUncertaintyNanos else "",
-                m.codeType,
+                if (m.hasCodeType()) m.codeType else "",
                 if (c.hasElapsedRealtimeNanos()) c.elapsedRealtimeNanos else ""
             )
         }
