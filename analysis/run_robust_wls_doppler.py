@@ -129,13 +129,29 @@ def position_solution(nav):
 
 
 def doppler_velocity(full, pos_df):
-    """Estimate receiver ECEF velocity + clock drift per epoch."""
+    """Estimate receiver ECEF velocity + clock drift per epoch.
+
+    Android PseudorangeRateMetersPerSecond is treated as range-rate. Broadcast
+    RINEX states produced by add_sv_states_rinex do not always expose
+    b_dot_sv_mps. When absent we set satellite clock drift to zero explicitly;
+    this is a small approximation compared with phone pseudorange-rate noise and
+    is recorded in the output summary.
+    """
     fdf=full.pandas_df().copy()
     req=["gps_millis","x_sv_m","y_sv_m","z_sv_m","vx_sv_mps","vy_sv_mps","vz_sv_mps",
-         "b_dot_sv_mps","PseudorangeRateMetersPerSecond","PseudorangeRateUncertaintyMetersPerSecond"]
+         "PseudorangeRateMetersPerSecond","PseudorangeRateUncertaintyMetersPerSecond"]
     missing=[c for c in req if c not in fdf.columns]
     if missing: return pd.DataFrame(), {"error":f"missing {missing}"}
-    for c in req: fdf[c]=pd.to_numeric(fdf[c],errors="coerce")
+
+    if "b_dot_sv_mps" in fdf.columns:
+        fdf["b_dot_sv_mps"]=pd.to_numeric(fdf["b_dot_sv_mps"],errors="coerce").fillna(0.0)
+        clock_source="broadcast b_dot_sv_mps"
+    else:
+        fdf["b_dot_sv_mps"]=0.0
+        clock_source="0 m/s fallback; add_sv_states_rinex did not provide b_dot_sv_mps"
+
+    for c in req:
+        fdf[c]=pd.to_numeric(fdf[c],errors="coerce")
     pmap={int(round(r.gps_millis)):(r.x_rx_wls_m,r.y_rx_wls_m,r.z_rx_wls_m)
           for r in pos_df.itertuples() if np.isfinite(r.gps_millis)}
     rows=[]
@@ -160,17 +176,16 @@ def doppler_velocity(full, pos_df):
             x,*_=np.linalg.lstsq(A*sw[:,None],y*sw,rcond=None)
         except np.linalg.LinAlgError:
             continue
-        speed=float(np.linalg.norm(x[:3]))
         residual=y-A@x
         rows.append({"gps_millis":float(t),"vx_ecef_mps":x[0],"vy_ecef_mps":x[1],"vz_ecef_mps":x[2],
-                     "clock_drift_mps":x[3],"speed_3d_mps":speed,"doppler_residual_rms_mps":float(np.sqrt(np.mean(residual**2))),
-                     "satellites":len(A)})
+                     "clock_drift_mps":x[3],"speed_3d_mps":float(np.linalg.norm(x[:3])),
+                     "doppler_residual_rms_mps":float(np.sqrt(np.mean(residual**2))),"satellites":len(A)})
     out=pd.DataFrame(rows)
-    summary={}
+    summary={"satellite_clock_drift_source":clock_source}
     if not out.empty:
-        summary={"epochs":len(out),"speed_3d_mps":stats(out.speed_3d_mps),
-                 "residual_rms_mps":stats(out.doppler_residual_rms_mps),
-                 "satellites_per_epoch":stats(out.satellites)}
+        summary.update({"epochs":len(out),"speed_3d_mps":stats(out.speed_3d_mps),
+                        "residual_rms_mps":stats(out.doppler_residual_rms_mps),
+                        "satellites_per_epoch":stats(out.satellites)})
     return out,summary
 
 
@@ -195,7 +210,8 @@ def main():
     robust_disp=local_dispersion(robust.lat_deg,robust.lon_deg)
     robust_disp["first_half_to_second_half_median_drift"]=half_drift(robust.lat_deg,robust.lon_deg)
 
-    vel,vel_summary=doppler_velocity(fde,robust)
+    vel_plain,vel_plain_summary=doppler_velocity(full,base)
+    vel_fde,vel_fde_summary=doppler_velocity(fde,robust)
     fix=read_fix(args.log)
     android={}
     if not fix.empty:
@@ -206,17 +222,25 @@ def main():
     result={
         "method":"GPS L1 broadcast ephemeris; sigma-weighted WLS; gnss_lib_py residual FDE; Doppler velocity WLS",
         "raw_measurements_before":before,"gps_l1_after_gate":gated,
-        "fde":{"method":"residual","max_faults":args.max_faults,"measurements_after_fde":after_fde},
-        "android_fix":android,"plain_wls":base_disp,"residual_fde_wls":robust_disp,"doppler_velocity":vel_summary,
+        "fde":{"method":"residual","max_faults":args.max_faults,"measurements_after_fde":after_fde,
+               "removed":gated-after_fde,"removed_fraction":(gated-after_fde)/gated if gated else None},
+        "android_fix":android,"plain_wls":base_disp,"residual_fde_wls":robust_disp,
+        "doppler_velocity_plain":vel_plain_summary,"doppler_velocity_after_fde":vel_fde_summary,
     }
     (out/"summary.json").write_text(json.dumps(result,indent=2),encoding="utf-8")
     base.to_csv(out/"plain_wls.csv",index=False); robust.to_csv(out/"robust_wls.csv",index=False)
-    vel.to_csv(out/"doppler_velocity.csv",index=False)
+    vel_plain.to_csv(out/"doppler_velocity_plain.csv",index=False)
+    vel_fde.to_csv(out/"doppler_velocity_fde.csv",index=False)
 
     def m(d,k): return d.get("radial_from_median_m",{}).get(k)
     def fmt(x): return "n/a" if x is None else f"{x:.3f}"
+    def vline(s):
+        return (f"{fmt(s.get('speed_3d_mps',{}).get('p50'))} / "
+                f"{fmt(s.get('speed_3d_mps',{}).get('p95'))} / "
+                f"{fmt(s.get('speed_3d_mps',{}).get('max'))}")
     lines=["# Robust WLS + Doppler experiment","",
-           f"- Raw rows / GPS-L1 gated / after FDE: **{before} / {gated} / {after_fde}**","",
+           f"- Raw rows / GPS-L1 gated / after FDE: **{before} / {gated} / {after_fde}**",
+           f"- FDE removed: **{gated-after_fde} ({100*(gated-after_fde)/gated:.1f}%)**","",
            "| Static repeatability | Android | Plain WLS | Residual-FDE WLS |",
            "|---|---:|---:|---:|",
            f"| P50 radial (m) | {fmt(m(android,'p50'))} | {fmt(m(base_disp,'p50'))} | {fmt(m(robust_disp,'p50'))} |",
@@ -224,9 +248,11 @@ def main():
            f"| P99 radial (m) | {fmt(m(android,'p99'))} | {fmt(m(base_disp,'p99'))} | {fmt(m(robust_disp,'p99'))} |",
            f"| Half-to-half drift (m) | {fmt((android.get('first_half_to_second_half_median_drift') or {}).get('distance_m'))} | {fmt((base_disp.get('first_half_to_second_half_median_drift') or {}).get('distance_m'))} | {fmt((robust_disp.get('first_half_to_second_half_median_drift') or {}).get('distance_m'))} |","",
            "## Doppler velocity (phone was static)",
-           f"- Epochs: **{vel_summary.get('epochs','n/a')}**",
-           f"- 3D speed P50 / P95 / max: **{fmt(vel_summary.get('speed_3d_mps',{}).get('p50'))} / {fmt(vel_summary.get('speed_3d_mps',{}).get('p95'))} / {fmt(vel_summary.get('speed_3d_mps',{}).get('max'))} m/s**",
-           f"- Doppler residual RMS P50 / P95: **{fmt(vel_summary.get('residual_rms_mps',{}).get('p50'))} / {fmt(vel_summary.get('residual_rms_mps',{}).get('p95'))} m/s**","",
+           f"- Plain epochs: **{vel_plain_summary.get('epochs','n/a')}**; speed P50 / P95 / max: **{vline(vel_plain_summary)} m/s**",
+           f"- FDE epochs: **{vel_fde_summary.get('epochs','n/a')}**; speed P50 / P95 / max: **{vline(vel_fde_summary)} m/s**",
+           f"- Plain Doppler residual RMS P50 / P95: **{fmt(vel_plain_summary.get('residual_rms_mps',{}).get('p50'))} / {fmt(vel_plain_summary.get('residual_rms_mps',{}).get('p95'))} m/s**",
+           f"- FDE Doppler residual RMS P50 / P95: **{fmt(vel_fde_summary.get('residual_rms_mps',{}).get('p50'))} / {fmt(vel_fde_summary.get('residual_rms_mps',{}).get('p95'))} m/s**",
+           f"- Satellite clock drift: **{vel_plain_summary.get('satellite_clock_drift_source','n/a')}**","",
            "Static dispersion is repeatability around each solution's median, not absolute accuracy."]
     (out/"summary.md").write_text("\n".join(lines)+"\n",encoding="utf-8")
     print("\n".join(lines))
