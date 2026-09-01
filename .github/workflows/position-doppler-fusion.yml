@@ -1,0 +1,47 @@
+name: Position plus Doppler Kalman baseline
+
+on:
+  push:
+    branches:
+      - analysis/robust-wls-doppler
+    paths:
+      - 'analysis/run_position_doppler_kf.py'
+      - 'analysis/requirements-wls.txt'
+      - '.github/workflows/position-doppler-fusion.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  fuse:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install fusion dependencies only
+        run: pip install 'numpy>=1.26,<3' 'pandas>=2.2,<3' 'filterpy==1.4.5'
+      - name: Download validated static Doppler baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: robust-wls-doppler
+          path: analysis/validated_doppler
+          repository: jdlc86/gps_gnss
+          run-id: 33462641778
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run Android-position plus Doppler Kalman baseline
+        run: |
+          python analysis/run_position_doppler_kf.py gnss_log.txt \
+            --doppler analysis/validated_doppler/doppler_velocity_plain.csv \
+            --out-dir analysis/fusion_output
+      - name: Show summary
+        run: cat analysis/fusion_output/summary.md
+      - name: Upload fusion results
+        uses: actions/upload-artifact@v4
+        with:
+          name: position-doppler-kf
+          path: analysis/fusion_output/
