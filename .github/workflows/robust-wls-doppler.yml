@@ -9,6 +9,9 @@ on:
       - 'analysis/run_robust_wls_doppler.py'
       - 'analysis/requirements-wls.txt'
       - '.github/workflows/robust-wls-doppler.yml'
+  pull_request:
+    branches:
+      - analysis/raw-wls-baseline
   workflow_dispatch:
 
 jobs:
