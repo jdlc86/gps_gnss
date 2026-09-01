@@ -1,0 +1,3 @@
+gnss-lib-py==1.0.4
+pandas>=2.2,<3
+numpy>=1.26,<3
