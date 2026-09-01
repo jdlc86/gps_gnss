@@ -27,6 +27,19 @@ jobs:
       - name: Install dependencies
         run: pip install -r analysis/requirements-wls.txt
 
+      # gnss-lib-py 1.0.4 uses FTP for same-day RINEX downloads. BKG now
+      # recommends HTTPS and GitHub-hosted runners can have passive-FTP bind
+      # failures, so preload the exact current-day broadcast file in the cache
+      # directory expected by gnss-lib-py. This is still an IGS/BKG broadcast
+      # ephemeris product; only the transport is changed.
+      - name: Fetch broadcast ephemeris over HTTPS
+        run: |
+          mkdir -p data/ephemeris/rinex/nav
+          curl --fail --location --retry 4 --retry-delay 3 \
+            'https://igs.bkg.bund.de/root_ftp/IGS/BRDC/2026/244/BRDC00WRD_S_20262440000_01D_MN.rnx.gz' \
+            --output data/ephemeris/rinex/nav/BRDC00WRD_S_20262440000_01D_MN.rnx.gz
+          gzip -df data/ephemeris/rinex/nav/BRDC00WRD_S_20262440000_01D_MN.rnx.gz
+
       - name: Run WLS baseline
         run: python analysis/run_wls_baseline.py gnss_log.txt --out-dir analysis/wls_output
 
