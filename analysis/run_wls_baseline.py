@@ -7,11 +7,17 @@ implementing satellite orbit propagation or WLS from scratch.
 Pipeline:
   GnssLogger-compatible Raw rows
     -> AndroidRawGnss parser / pseudoranges
-    -> measurement quality gating
-    -> precise satellite states
+    -> conservative GPS L1 quality gating
+    -> broadcast RINEX satellite states
     -> satellite clock correction
-    -> GPS+Galileo WLS
+    -> weighted least squares
     -> static repeatability metrics + comparison with Android Fix
+
+Why GPS L1 for the first baseline?
+- Broadcast ephemeris is available for current-day/realtime processing.
+- gnss_lib_py's RINEX broadcast path currently supports GPS.
+- Restricting to L1 avoids using L1 and L5 from the same SV as independent
+  observations before explicitly modelling inter-frequency code biases.
 
 The current phone reports ADR state 16 for all observations, so ADR validity is
 NOT used as a gate here. This baseline is code/pseudorange based, not carrier-
@@ -127,18 +133,33 @@ def main():
     rdf = raw.pandas_df()
     before = len(rdf)
 
-    required = ["gps_millis", "raw_pr_m", "raw_pr_sigma_m", "cn0_dbhz", "gnss_id"]
+    required = [
+        "gps_millis", "raw_pr_m", "raw_pr_sigma_m", "cn0_dbhz",
+        "gnss_id", "CarrierFrequencyHz"
+    ]
     missing = [c for c in required if c not in rdf.columns]
     if missing:
-        raise RuntimeError(f"AndroidRawGnss parser missing expected rows: {missing}; available={list(rdf.columns)}")
+        raise RuntimeError(
+            f"AndroidRawGnss parser missing expected rows: {missing}; "
+            f"available={list(rdf.columns)}"
+        )
 
-    for col in ("gps_millis", "raw_pr_m", "raw_pr_sigma_m", "cn0_dbhz"):
+    for col in (
+        "gps_millis", "raw_pr_m", "raw_pr_sigma_m", "cn0_dbhz",
+        "CarrierFrequencyHz"
+    ):
         rdf[col] = pd.to_numeric(rdf[col], errors="coerce")
 
-    # Conservative code/pseudorange gate. Restrict to GPS+Galileo initially to
-    # avoid estimating inter-constellation clock offsets for GLONASS/BeiDou.
+    # First, deliberately simple and auditable baseline:
+    #   GPS + L1 C/A-like observations only.
+    # This prevents duplicate L1/L5 observations from the same SV from being
+    # treated as independent before modelling differential code biases.
+    is_gps_l1 = (
+        (rdf["gnss_id"] == "gps")
+        & rdf["CarrierFrequencyHz"].between(1.55e9, 1.60e9)
+    )
     mask = (
-        rdf["gnss_id"].isin(["gps", "galileo"])
+        is_gps_l1
         & rdf["gps_millis"].notna()
         & rdf["raw_pr_m"].between(1.0e6, 6.0e7)
         & rdf["raw_pr_sigma_m"].between(0.0, args.max_pr_sigma)
@@ -151,10 +172,10 @@ def main():
 
     meas = glp.NavData(pandas_df=rdf)
 
-    # Reuse gnss_lib_py ephemeris handling. 'precise' downloads the required
-    # precise products when available and avoids implementing orbit propagation
-    # locally.
-    full = glp.add_sv_states(meas, source="precise", verbose=True)
+    # Use broadcast RINEX ephemerides because this is a current-day experiment.
+    # Precise SP3 products can lag and were unavailable for the latest UTC day
+    # during the first CI attempt.
+    full = glp.add_sv_states_rinex(meas)
     full["corr_pr_m"] = full["raw_pr_m"] + full["b_sv_m"]
     full["weights"] = 1.0 / np.maximum(full["raw_pr_sigma_m"], 1e-3) ** 2
 
@@ -178,7 +199,7 @@ def main():
     if len(wdf) == 0:
         raise RuntimeError("No finite WLS epochs were produced")
 
-    wls_summary, east, north, radial = local_dispersion(
+    wls_summary, _, _, _ = local_dispersion(
         wdf["lat_rx_wls_deg"], wdf["lon_rx_wls_deg"]
     )
 
@@ -210,12 +231,14 @@ def main():
 
     result = {
         "library": "gnss-lib-py",
-        "method": "code-pseudorange WLS, GPS+Galileo, precise SV states",
+        "method": "code-pseudorange WLS, GPS L1, broadcast RINEX ephemeris",
         "carrier_phase_used": False,
         "quality_gate": {
             "min_cn0_dbhz": args.min_cn0,
             "max_raw_pr_sigma_m": args.max_pr_sigma,
-            "constellations": ["gps", "galileo"],
+            "constellations": ["gps"],
+            "band": "L1",
+            "frequency_hz": [1.55e9, 1.60e9],
             "measurements_before": before,
             "measurements_after": after_gate,
         },
@@ -234,7 +257,7 @@ def main():
         "This is a **code/pseudorange** WLS baseline. ADR/carrier phase is not used.",
         "",
         f"- Raw measurements: **{before}**",
-        f"- After GPS+Galileo quality gate: **{after_gate}**",
+        f"- After GPS L1 quality gate: **{after_gate}**",
         f"- Finite WLS epochs: **{len(wdf)}**",
         "",
         "## Static repeatability",
