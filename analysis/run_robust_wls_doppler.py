@@ -129,11 +129,7 @@ def position_solution(nav):
 
 
 def doppler_velocity(full, pos_df):
-    """Estimate receiver ECEF velocity + clock drift per epoch.
-
-    rho_dot = u.(v_sv-v_rx) + bdot_rx - bdot_sv
-    -> (rho_dot + bdot_sv - u.v_sv) = [-u, 1] [v_rx, bdot_rx]
-    """
+    """Estimate receiver ECEF velocity + clock drift per epoch."""
     fdf=full.pandas_df().copy()
     req=["gps_millis","x_sv_m","y_sv_m","z_sv_m","vx_sv_mps","vy_sv_mps","vz_sv_mps",
          "b_dot_sv_mps","PseudorangeRateMetersPerSecond","PseudorangeRateUncertaintyMetersPerSecond"]
@@ -193,8 +189,8 @@ def main():
     base_disp=local_dispersion(base.lat_deg,base.lon_deg)
     base_disp["first_half_to_second_half_median_drift"]=half_drift(base.lat_deg,base.lon_deg)
 
-    # gnss_lib_py residual-FDE is reused rather than writing custom outlier logic.
     fde=glp.solve_fde(full,method="residual",remove_outliers=True,max_faults=args.max_faults)
+    after_fde=fde.num_cols
     robust=position_solution(fde)
     robust_disp=local_dispersion(robust.lat_deg,robust.lon_deg)
     robust_disp["first_half_to_second_half_median_drift"]=half_drift(robust.lat_deg,robust.lon_deg)
@@ -210,7 +206,7 @@ def main():
     result={
         "method":"GPS L1 broadcast ephemeris; sigma-weighted WLS; gnss_lib_py residual FDE; Doppler velocity WLS",
         "raw_measurements_before":before,"gps_l1_after_gate":gated,
-        "fde":{"method":"residual","max_faults":args.max_faults,"measurements_after_fde":len(fde)},
+        "fde":{"method":"residual","max_faults":args.max_faults,"measurements_after_fde":after_fde},
         "android_fix":android,"plain_wls":base_disp,"residual_fde_wls":robust_disp,"doppler_velocity":vel_summary,
     }
     (out/"summary.json").write_text(json.dumps(result,indent=2),encoding="utf-8")
@@ -220,7 +216,7 @@ def main():
     def m(d,k): return d.get("radial_from_median_m",{}).get(k)
     def fmt(x): return "n/a" if x is None else f"{x:.3f}"
     lines=["# Robust WLS + Doppler experiment","",
-           f"- Raw rows / GPS-L1 gated / after FDE: **{before} / {gated} / {len(fde)}**","",
+           f"- Raw rows / GPS-L1 gated / after FDE: **{before} / {gated} / {after_fde}**","",
            "| Static repeatability | Android | Plain WLS | Residual-FDE WLS |",
            "|---|---:|---:|---:|",
            f"| P50 radial (m) | {fmt(m(android,'p50'))} | {fmt(m(base_disp,'p50'))} | {fmt(m(robust_disp,'p50'))} |",
