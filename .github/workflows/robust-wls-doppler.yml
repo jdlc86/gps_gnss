@@ -7,6 +7,7 @@ on:
     paths:
       - 'gnss_log.txt'
       - 'analysis/run_robust_wls_doppler.py'
+      - 'analysis/run_robust_wls_doppler_local_ephem.py'
       - 'analysis/run_position_doppler_kf.py'
       - 'analysis/requirements-wls.txt'
       - '.github/workflows/robust-wls-doppler.yml'
@@ -33,7 +34,7 @@ jobs:
             --output data/ephemeris/BRDC00WRD_S_20262440000_01D_MN.rnx.gz
           gzip -df data/ephemeris/BRDC00WRD_S_20262440000_01D_MN.rnx.gz
       - name: Run residual-FDE WLS and Doppler analysis
-        run: python analysis/run_robust_wls_doppler.py gnss_log.txt --out-dir analysis/robust_output
+        run: python analysis/run_robust_wls_doppler_local_ephem.py gnss_log.txt --ephemeris-path data/ephemeris --out-dir analysis/robust_output
       - name: Run Android-position plus Doppler Kalman baseline
         run: python analysis/run_position_doppler_kf.py gnss_log.txt --doppler analysis/robust_output/doppler_velocity_plain.csv --out-dir analysis/fusion_output
       - name: Upload GNSS results
