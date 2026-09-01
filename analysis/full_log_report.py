@@ -7,11 +7,11 @@ with open(P,encoding='utf-8') as f:
   if not line or line[0]=='#': continue
   r=next(csv.reader([line])); typ=r[0]; counts[typ]+=1
   try:
-   if typ=='Fix' and len(r)>=15:
+   if typ=='Fix' and len(r)>=14:
     fixes.append(dict(lat=float(r[2]),lon=float(r[3]),alt=float(r[4]),speed=float(r[5]),acc=float(r[6]),bearing=None if r[7]=='' else float(r[7]),t=int(r[8]),sacc=None if r[9]=='' else float(r[9]),bacc=None if r[10]=='' else float(r[10]),ert=int(r[11]),vacc=None if r[12]=='' else float(r[12])))
-   elif typ=='Raw' and len(r)>=38:
+   elif typ=='Raw' and len(r)>=37:
     raws.append(dict(t=int(r[1]),svid=int(r[11]),state=int(r[13]),cn0=float(r[16]),prr=float(r[17]),prru=float(r[18]),adrstate=int(r[19]),adr=float(r[20]),adru=float(r[21]),freq=float(r[22]) if r[22] else None,const=int(r[28]),agc=float(r[29]) if r[29] else None,bb=float(r[30]) if r[30] else None,code=r[35] if len(r)>35 else ''))
-   elif typ=='Status' and len(r)>=15:
+   elif typ=='Status' and len(r)>=14:
     status.append(dict(const=int(r[4]),svid=int(r[5]),freq=float(r[6]) if r[6] else None,cn0=float(r[7]),used=int(r[10])))
    elif typ in ('UncalAccel','UncalGyro','UncalMag'):
     imu[typ].append(tuple(float(x) for x in r[3:6]))
