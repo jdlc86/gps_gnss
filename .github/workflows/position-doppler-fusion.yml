@@ -7,6 +7,7 @@ on:
     paths:
       - 'analysis/run_position_doppler_kf.py'
       - 'analysis/run_position_doppler_zupt.py'
+      - 'analysis/run_position_doppler_imu_zupt.py'
       - 'analysis/requirements-wls.txt'
       - '.github/workflows/position-doppler-fusion.yml'
   workflow_dispatch:
@@ -39,16 +40,23 @@ jobs:
           python analysis/run_position_doppler_kf.py gnss_log.txt \
             --doppler analysis/validated_doppler/doppler_velocity_plain.csv \
             --out-dir analysis/fusion_output
-      - name: Run Doppler gating plus automatic ZUPT
+      - name: Run Doppler-only automatic ZUPT
         run: |
           python analysis/run_position_doppler_zupt.py gnss_log.txt \
             --doppler analysis/validated_doppler/doppler_velocity_plain.csv \
             --out-dir analysis/zupt_output
+      - name: Run IMU-assisted hysteretic ZUPT
+        run: |
+          python analysis/run_position_doppler_imu_zupt.py gnss_log.txt \
+            --doppler analysis/validated_doppler/doppler_velocity_plain.csv \
+            --out-dir analysis/imu_zupt_output
       - name: Show summaries
         run: |
           cat analysis/fusion_output/summary.md
           echo
           cat analysis/zupt_output/summary.md
+          echo
+          cat analysis/imu_zupt_output/summary.md
       - name: Upload fusion results
         uses: actions/upload-artifact@v4
         with:
@@ -56,3 +64,4 @@ jobs:
           path: |
             analysis/fusion_output/
             analysis/zupt_output/
+            analysis/imu_zupt_output/
