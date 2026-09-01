@@ -1,0 +1,53 @@
+name: Robust WLS and Doppler
+
+on:
+  push:
+    branches:
+      - analysis/robust-wls-doppler
+    paths:
+      - 'gnss_log.txt'
+      - 'analysis/run_robust_wls_doppler.py'
+      - 'analysis/run_robust_wls_doppler_local_ephem.py'
+      - 'analysis/run_position_doppler_kf.py'
+      - 'analysis/requirements-wls.txt'
+      - '.github/workflows/robust-wls-doppler.yml'
+  pull_request:
+    branches:
+      - analysis/raw-wls-baseline
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r analysis/requirements-wls.txt
+      - name: Fetch broadcast ephemeris over HTTPS
+        run: |
+          mkdir -p data/ephemeris
+          curl --fail --location --retry 4 --retry-delay 3 \
+            'https://igs.bkg.bund.de/root_ftp/IGS/BRDC/2026/244/BRDC00WRD_S_20262440000_01D_MN.rnx.gz' \
+            --output data/ephemeris/BRDC00WRD_S_20262440000_01D_MN.rnx.gz
+          gzip -df data/ephemeris/BRDC00WRD_S_20262440000_01D_MN.rnx.gz
+      - name: Run residual-FDE WLS and Doppler analysis
+        run: python analysis/run_robust_wls_doppler_local_ephem.py gnss_log.txt --ephemeris-path data/ephemeris --out-dir analysis/robust_output
+      - name: Run Android-position plus Doppler Kalman baseline
+        run: python analysis/run_position_doppler_kf.py gnss_log.txt --doppler analysis/robust_output/doppler_velocity_plain.csv --out-dir analysis/fusion_output
+      - name: Upload GNSS results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: robust-wls-doppler
+          path: analysis/robust_output/
+          if-no-files-found: warn
+      - name: Upload fusion results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: position-doppler-kf
+          path: analysis/fusion_output/
+          if-no-files-found: warn
