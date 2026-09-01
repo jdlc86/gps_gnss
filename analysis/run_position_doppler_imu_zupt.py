@@ -42,7 +42,7 @@ def read_imu(path):
     def secmed(rows,name):
         if not rows:return pd.DataFrame(columns=['unix_ms',name])
         d=pd.DataFrame(rows,columns=['unix_ms',name]); d['bin']=(d.unix_ms/1000).round().astype('int64')
-        o=d.groupby('bin')[name].median().reset_index(); o['unix_ms']=o.bin*1000.; return o[['unix_ms',name]].sort_values('unix_ms')
+        o=d.groupby('bin')[name].median().reset_index(); o['unix_ms']=(o.bin*1000.).astype(float); return o[['unix_ms',name]].sort_values('unix_ms')
     return secmed(acc,'acc_norm'),secmed(gyr,'gyro_norm')
 
 def main():
@@ -52,10 +52,10 @@ def main():
     for c in ('gps_millis','vx_ecef_mps','vy_ecef_mps','vz_ecef_mps'): dop[c]=pd.to_numeric(dop[c],errors='coerce')
     dop=dop.dropna(subset=['gps_millis','vx_ecef_mps','vy_ecef_mps','vz_ecef_mps']).copy()
     lat0=float(np.median(fix.LatitudeDegrees)); lon0=float(np.median(fix.LongitudeDegrees)); fix['east_m'],fix['north_m']=lla_to_local(fix.LatitudeDegrees,fix.LongitudeDegrees,lat0,lon0)
-    enu=[ecef_velocity_to_enu(r.vx_ecef_mps,r.vy_ecef_mps,r.vz_ecef_mps,lat0,lon0) for r in dop.itertuples()]; dop['ve']=[x[0] for x in enu]; dop['vn']=[x[1] for x in enu]; dop['unix_ms']=dop.gps_millis+GPS_UNIX_EPOCH_OFFSET_MS-GPS_UTC_LEAP_MS
+    enu=[ecef_velocity_to_enu(r.vx_ecef_mps,r.vy_ecef_mps,r.vz_ecef_mps,lat0,lon0) for r in dop.itertuples()]; dop['ve']=[x[0] for x in enu]; dop['vn']=[x[1] for x in enu]; dop['unix_ms']=(dop.gps_millis+GPS_UNIX_EPOCH_OFFSET_MS-GPS_UTC_LEAP_MS).astype(float)
     acc,gyr=read_imu(a.log); dop=dop.sort_values('unix_ms'); dop=pd.merge_asof(dop,acc,on='unix_ms',direction='nearest',tolerance=1200); dop=pd.merge_asof(dop,gyr,on='unix_ms',direction='nearest',tolerance=1200)
-    # nearest Android speed at Doppler epoch
-    fs=fix[['UnixTimeMillis','SpeedMps']].copy().rename(columns={'UnixTimeMillis':'unix_ms','SpeedMps':'android_speed'}).sort_values('unix_ms'); dop=pd.merge_asof(dop,fs,on='unix_ms',direction='nearest',tolerance=1500)
+    # nearest Android speed at Doppler epoch; merge_asof requires identical dtypes
+    fs=fix[['UnixTimeMillis','SpeedMps']].copy().rename(columns={'UnixTimeMillis':'unix_ms','SpeedMps':'android_speed'}); fs['unix_ms']=pd.to_numeric(fs['unix_ms'],errors='coerce').astype(float); fs=fs.dropna(subset=['unix_ms']).sort_values('unix_ms'); dop=pd.merge_asof(dop,fs,on='unix_ms',direction='nearest',tolerance=1500.)
     events=[]
     for r in fix.itertuples():
         sig=float(r.AccuracyMeters) if np.isfinite(getattr(r,'AccuracyMeters',np.nan)) and r.AccuracyMeters>0 else 3.; events.append((float(r.UnixTimeMillis),'pos',np.array([r.east_m,r.north_m]),sig,None))
